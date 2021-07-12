@@ -71,34 +71,89 @@ DECLARE
   mLat  ALIAS FOR $2;
   mDist ALIAS FOR $3;
   
-  mAddress  varchar;
+  point     geometry;
+  o_bdry    RECORD;
   record    RECORD;
   output    geores;
+  s_flag    boolean;
+  s_bdry    RECORD;
 BEGIN
 
-  SELECT INTO record todofuken, shikuchoson, ooaza, chiban,
-    lon, lat,
-    todofuken||shikuchoson||ooaza||chiban AS address,
-    st_distance(st_setsrid(st_makepoint( mLon,mLat),4326)::geography,geog) AS dist 
-    FROM address  
-    WHERE st_dwithin(st_setsrid(st_makepoint(mLon,mLat),4326)::geography,geog,mDist) 
-    ORDER BY dist LIMIT 1;
-    
+  s_flag := FALSE;
+  SELECT INTO point st_setsrid(st_makepoint(mLon,mLat),4326);
+  SELECT INTO o_bdry geom FROM boundary_o WHERE st_intersects(point,geom);
   IF FOUND THEN
-     output.x          := record.lon;
-     output.y          := record.lat;
-     output.code       := 1;
-     output.address    := record.address;
-     output.todofuken  := record.todofuken;
-     output.shikuchoson:= record.shikuchoson;
-     output.ooaza      := record.ooaza;
-     output.chiban     := record.chiban;
+    SELECT INTO record todofuken, shikuchoson, ooaza, chiban,
+      lon, lat,
+      todofuken||shikuchoson||ooaza||chiban AS address,
+      st_distance(point::geography,geog) AS dist 
+      FROM address 
+      WHERE st_intersects(geog,o_bdry.geom::geography) AND st_dwithin(point::geography,geog,mDist) 
+      ORDER BY dist LIMIT 1;
+      
+    IF FOUND THEN
+      output.x          := record.lon;
+      output.y          := record.lat;
+      output.code       := 1;
+      output.address    := record.address;
+      output.todofuken  := record.todofuken;
+      output.shikuchoson:= record.shikuchoson;
+      output.ooaza      := record.ooaza;
+      output.chiban     := record.chiban;
 
-    RETURN output;
+      RETURN output;
+    ELSE
+      SELECT INTO record todofuken, shikuchoson, ooaza,
+        lon, lat,
+        todofuken||shikuchoson||ooaza AS address,
+        st_distance(point::geography,geog) AS dist 
+        FROM address_o 
+        WHERE st_intersects(geog,o_bdry.geom::geography) 
+        ORDER BY dist LIMIT 1;
+        
+      IF FOUND THEN
+        output.x          := record.lon;
+        output.y          := record.lat;
+        output.code       := 2;
+        output.address    := record.address;
+        output.todofuken  := record.todofuken;
+        output.shikuchoson:= record.shikuchoson;
+        output.ooaza      := record.ooaza;
+        output.chiban     := NULL;
+
+        RETURN output;
+      ELSE
+        s_flag := TRUE;
+      END IF;
+    END IF;
   ELSE
-    RETURN NULL;
+    s_flag := TRUE;
   END IF;
-  
+
+  IF s_flag THEN
+    SELECT INTO s_bdry geom FROM boundary_s WHERE st_intersects(point,geom);
+    IF FOUND THEN
+      SELECT INTO record todofuken, shikuchoson, lon, lat,
+          todofuken||shikuchoson AS address, 0 AS dist
+        FROM address_s AS a
+        WHERE st_intersects(a.geog, s_bdry.geom::geography);
+      IF FOUND THEN
+        output.x          := record.lon;
+        output.y          := record.lat;
+        output.code       := 3;
+        output.address    := record.address;
+        output.todofuken  := record.todofuken;
+        output.shikuchoson:= record.shikuchoson;
+        output.ooaza      := NULL;
+        output.chiban     := NULL;
+
+        RETURN output;
+      ELSE
+        RETURN NULL;
+      END IF;
+    ELSE
+      RETURN NULL;
+    END IF;
+  END IF;
 END;
 $$ LANGUAGE plpgsql;
-  
